@@ -286,10 +286,10 @@ async function createDriver(
   ) {
     driver = new QuarkDriver(parseAddition(storageConfig))
     await driver.init?.()
-  // 注意：115 / 115Open 统一走 Pan115Driver（115open 目录）。
-  // 旧 drivers/115（Client115）端点写成 /open + /open/ufile/files → /open/open/ufile/files，
-  // 且用 POST+JSON，115 开放平台实际要求 GET+query，会报 "Method POST does not exist"，
-  // 再经错误模板输出为 "[115] API error ()"。该分支已在下方 normDriver.startsWith("115") 处理。
+    // 注意：115 / 115Open 统一走 Pan115Driver（115open 目录）。
+    // 旧 drivers/115（Client115）端点写成 /open + /open/ufile/files → /open/open/ufile/files，
+    // 且用 POST+JSON，115 开放平台实际要求 GET+query，会报 "Method POST does not exist"，
+    // 再经错误模板输出为 "[115] API error ()"。该分支已在下方 normDriver.startsWith("115") 处理。
   } else if (
     normDriver === "cloudreve" ||
     normDriver === "cloudrevev3" ||
@@ -487,6 +487,13 @@ async function createDriver(
     const addition = parseAddition(storageConfig)
     driver = new DriverChaoXing(addition, async (cookie: string) => {
       try {
+        if (deferredTokenPersistence.has(storageConfig)) {
+          storageConfig.addition = JSON.stringify({
+            ...parseAddition(storageConfig),
+            cookie,
+          })
+          return
+        }
         const db = await getDb()
         const st = (db.storages || []).find(
           (s: any) => s.id === storageConfig?.id,
@@ -498,6 +505,9 @@ async function createDriver(
             : st.addition || {}
         stAddition.cookie = cookie
         st.addition = JSON.stringify(stAddition)
+        if (storageConfig && typeof storageConfig === "object") {
+          storageConfig.addition = st.addition
+        }
         await saveDb(db)
       } catch (e) {
         console.warn("[chaoxing] failed to persist cookie:", e)
@@ -1069,7 +1079,9 @@ async function createDriver(
     driver = new MegaDriver(addition, async (session) => {
       try {
         const db = await getDb()
-        const st = (db.storages || []).find((s: any) => s.id === storageConfig?.id)
+        const st = (db.storages || []).find(
+          (s: any) => s.id === storageConfig?.id,
+        )
         if (!st) return
         const stAddition =
           typeof st.addition === "string"
@@ -1307,8 +1319,8 @@ export async function getDriver(
 ): Promise<StorageDriver> {
   const deferTokenPersistence = Boolean(
     options.deferTokenPersistence &&
-      storageConfig &&
-      typeof storageConfig === "object",
+    storageConfig &&
+    typeof storageConfig === "object",
   )
   if (deferTokenPersistence) deferredTokenPersistence.add(storageConfig)
 
@@ -1317,7 +1329,7 @@ export async function getDriver(
       .toLowerCase()
       .replace(/[^a-z0-9]/g, "")
     if (normDriver === "local") {
-      return createDriver(driverName, storageConfig)
+      return await createDriver(driverName, storageConfig)
     }
 
     if (!storageConfig) {
@@ -1330,7 +1342,7 @@ export async function getDriver(
     const cached = driverCache.get(cacheKey)
     if (cached) return cached
 
-    return getOrCreateDriver(driverInitCache, cacheKey, async () => {
+    return await getOrCreateDriver(driverInitCache, cacheKey, async () => {
       const ready = driverCache.get(cacheKey)
       if (ready) return ready
       const driver = await createDriver(driverName, storageConfig)

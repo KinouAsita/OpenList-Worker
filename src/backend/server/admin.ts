@@ -127,6 +127,7 @@ export const normalizeDriver = (driverName: string): string => {
   const norm = (driverName || "").toLowerCase().replace(/[^a-z0-9]/g, "")
   // 纯中文驱动名无法归一化为 a-z0-9，先做中文别名匹配
   if ((driverName || "").includes("城通")) return "CtFile"
+  if ((driverName || "").includes("超星")) return "ChaoXingGroupDrive"
   if (!norm) return ""
   const available = Object.keys(driverConfigs)
   const matched = available.find(
@@ -194,6 +195,7 @@ export const normalizeDriver = (driverName: string): string => {
   if (norm.includes("mediatrack") || norm.includes("fenmiao"))
     return "MediaTrack"
   if (norm.includes("alias")) return "Alias"
+  if (norm.startsWith("chaoxing")) return "ChaoXingGroupDrive"
   return driverName || ""
 }
 
@@ -556,6 +558,7 @@ adminRouter.get("/driver/names", (c) => {
       "ProtonDrive",
       "GitHub Releases",
       "CNB Releases",
+      "ChaoXingGroupDrive",
     ],
   })
 })
@@ -4672,6 +4675,66 @@ const driverConfigs: Record<string, any> = {
       no_upload: true,
       need_ms: false,
       default_root: "root",
+    },
+  },
+  ChaoXingGroupDrive: {
+    name: "ChaoXingGroupDrive",
+    default_mount_path: "/chaoxing",
+    // 对齐 Go drivers/chaoxing/meta.go：OnlyProxy: true, DefaultRoot: "-1", NoOverwriteUpload: true
+    common: [
+      ...BASE_FIELDS,
+      ENABLE_SIGN_FIELD,
+      DISABLE_INDEX_FIELD,
+      ...buildProxyFields("ChaoXingGroupDrive"),
+      DISABLE_PROXY_SIGN_FIELD,
+      SEED_POLICY_FIELD,
+    ],
+    additional: [
+      {
+        name: "root_folder_id",
+        type: "string",
+        default: "-1",
+        required: false,
+        help: "根文件夹 ID，默认为 -1（小组网盘根目录）",
+      },
+      {
+        name: "user_name",
+        type: "string",
+        default: "",
+        required: true,
+        help: "超星学习通账号（手机号/用户名）",
+      },
+      {
+        name: "password",
+        type: "string",
+        default: "",
+        required: true,
+        help: "超星学习通密码",
+      },
+      {
+        name: "bbsid",
+        type: "string",
+        default: "",
+        required: true,
+        help: "超星小组 URL 中的 bbsid 参数",
+      },
+      {
+        name: "cookie",
+        type: "text",
+        default: "",
+        required: false,
+        help: "可留空由程序自动登录获取；也可手动填入 Cookie",
+      },
+    ],
+    config: {
+      name: "ChaoXingGroupDrive",
+      local_sort: true,
+      only_local: false,
+      only_proxy: true,
+      no_cache: false,
+      no_upload: false,
+      need_ms: false,
+      default_root: "-1",
     },
   },
 }

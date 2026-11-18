@@ -73,7 +73,8 @@ export interface ProxyDecision {
  *   googlephoto   drivers/google_photo/meta.go
  *   quarkopen     drivers/quark_open/meta.go
  *   quarkuc       drivers/quark_uc/meta.go（Go 注册名为 "UC"）
- *   chaoxing      drivers/chaoxing/meta.go
+ *   chaoxinggroupdrive / chaoxinggroup / chaoxing
+ *                 drivers/chaoxing/meta.go（Go 注册名为 "ChaoXingGroupDrive"）
  *   local         drivers/local/meta.go（TS 走本地文件分支，不经驱动下载链路，
  *                 但 /p 端点判定仍需把它算作「允许代理」）
  *
@@ -125,6 +126,8 @@ const DRIVER_FORCE_PROXY = new Set<string>([
   "quarkopen",
   "quarkuc",
   "chaoxing",
+  "chaoxinggroupdrive",
+  "chaoxinggroup",
   "local",
 ])
 

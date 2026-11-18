@@ -3,7 +3,8 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { adminRouter } from "./admin"
 import { listItems } from "../internal/op/storage"
-import { saveDb } from "../internal/model/db"
+import { getDb, saveDb } from "../internal/model/db"
+import { driverMustProxy } from "../internal/driver/proxy"
 
 /**
  * Issue #107 回归：GitHub Releases / CNB Releases 必须出现在后台驱动列表中；
@@ -226,5 +227,198 @@ test("存储列表中的驱动配置可被 driver/info 复用（前端编辑页�
       key,
       `driver/info 未返回 ${key} 自身的配置`,
     )
+  }
+})
+
+test("driver/list、driver/names 与 driver/info 支持超星小组盘（ChaoXingGroupDrive）", async () => {
+  const env = await setupEnv()
+  const app = makeApp()
+
+  const listRes = await app.request(
+    "/api/admin/driver/list",
+    { method: "GET", headers: authHeaders },
+    env,
+  )
+  assert.equal(listRes.status, 200)
+  const listBody: any = await listRes.json()
+  const cx = listBody.data["ChaoXingGroupDrive"]
+  assert.ok(cx, "ChaoXingGroupDrive 必须出现在驱动列表中")
+  assert.equal(cx.name, "ChaoXingGroupDrive")
+  assert.equal(cx.default_mount_path, "/chaoxing")
+  assert.equal(cx.config.only_proxy, true)
+  assert.equal(cx.config.default_root, "-1")
+  assert.equal(cx.config.no_upload, false)
+  assert.equal(driverMustProxy("ChaoXingGroupDrive"), true)
+
+  const policyField = cx.common.find((f: any) => f.name === "webdav_policy")
+  assert.ok(policyField)
+  assert.equal(policyField.options, "use_proxy_url,native_proxy")
+  assert.equal(policyField.default, "native_proxy")
+
+  const cxFields = cx.additional.map((f: any) => f.name)
+  for (const field of [
+    "root_folder_id",
+    "user_name",
+    "password",
+    "bbsid",
+    "cookie",
+  ]) {
+    assert.ok(cxFields.includes(field), `ChaoXingGroupDrive 缺少字段 ${field}`)
+  }
+
+  const namesRes = await app.request(
+    "/api/admin/driver/names",
+    { method: "GET", headers: authHeaders },
+    env,
+  )
+  const namesBody: any = await namesRes.json()
+  assert.ok(namesBody.data.includes("ChaoXingGroupDrive"))
+
+  for (const alias of [
+    "ChaoXingGroupDrive",
+    "chaoxing",
+    "chaoxinggroupdrive",
+    "超星小组盘",
+  ]) {
+    const infoRes = await app.request(
+      `/api/admin/driver/info?driver=${encodeURIComponent(alias)}`,
+      { method: "GET", headers: authHeaders },
+      env,
+    )
+    const infoBody: any = await infoRes.json()
+    assert.equal(
+      infoBody.data.name,
+      "ChaoXingGroupDrive",
+      `alias=${alias} 应解析到 ChaoXingGroupDrive`,
+    )
+  }
+})
+
+test("通过 API 创建并更新超星小组盘存储：持久化 Cookie 并列出目录（端到端）", async () => {
+  const env = await setupEnv()
+  const app = makeApp()
+
+  let loginSeq = 0
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = (async (input: any) => {
+    const url = new URL(String(input))
+    if (url.hostname === "passport2.chaoxing.com") {
+      loginSeq++
+      const headers = new Headers()
+      headers.append("set-cookie", `UID=cx-cookie-${loginSeq}; Path=/`)
+      headers.append("set-cookie", `fid=100; Path=/`)
+      return new Response(JSON.stringify({ status: true }), {
+        status: 200,
+        headers,
+      })
+    }
+    if (url.pathname === "/pc/resource/getResourceList") {
+      const recType = url.searchParams.get("recType")
+      const folderId = url.searchParams.get("folderId")
+      assert.equal(folderId, "root-cx-99")
+      return new Response(
+        JSON.stringify({
+          result: 1,
+          list:
+            recType === "1"
+              ? [
+                  {
+                    id: 10,
+                    inserttime: 1700000000000,
+                    content: { folderName: "资料" },
+                  },
+                ]
+              : [
+                  {
+                    id: 20,
+                    content: {
+                      name: "课件.pdf",
+                      objectId: "obj-20",
+                      size: "4096",
+                      uploadDate: "1780191356415",
+                    },
+                  },
+                ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )
+    }
+    return new Response("", { status: 404 })
+  }) as typeof fetch
+
+  try {
+    const createRes = await app.request(
+      "/api/admin/storage/create",
+      {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          driver: "ChaoXingGroupDrive",
+          mount_path: "/chaoxing",
+          addition: JSON.stringify({
+            user_name: "13800138000",
+            password: "secret",
+            bbsid: "bbs-123",
+            root_folder_id: "-1",
+          }),
+        }),
+      },
+      env,
+    )
+    assert.equal(createRes.status, 200)
+    const created: any = await createRes.json()
+    assert.equal(created.code, 200)
+    assert.equal(created.data.driver, "ChaoXingGroupDrive")
+
+    const dbAfterCreate: any = await getDb(env)
+    const createdStorage = dbAfterCreate.storages.find(
+      (s: any) => s.id === created.data.id,
+    )
+    assert.equal(
+      JSON.parse(createdStorage.addition).cookie,
+      "UID=cx-cookie-1; fid=100",
+    )
+
+    // 确保 modified 时间戳推进，让 /storage/update 触发重新 init 与 deferredTokenPersistence
+    await new Promise((r) => setTimeout(r, 5))
+
+    const updateRes = await app.request(
+      "/api/admin/storage/update",
+      {
+        method: "POST",
+        headers: { ...authHeaders, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: created.data.id,
+          driver: "ChaoXingGroupDrive",
+          mount_path: "/chaoxing",
+          addition: JSON.stringify({
+            user_name: "13800138000",
+            password: "secret",
+            bbsid: "bbs-123",
+            root_folder_id: "root-cx-99",
+            cookie: "",
+          }),
+        }),
+      },
+      env,
+    )
+    assert.equal(updateRes.status, 200)
+    const updatedBody: any = await updateRes.json()
+    assert.equal(updatedBody.code, 200)
+
+    const dbAfterUpdate: any = await getDb(env)
+    const updatedStorage = dbAfterUpdate.storages.find(
+      (s: any) => s.id === created.data.id,
+    )
+    const updatedAdd = JSON.parse(updatedStorage.addition)
+    assert.equal(updatedAdd.root_folder_id, "root-cx-99")
+    assert.equal(updatedAdd.cookie, "UID=cx-cookie-2; fid=100")
+
+    const { content, provider } = await listItems("/chaoxing", { env })
+    assert.equal(provider, "ChaoXingGroupDrive")
+    assert.ok(content.some((i) => i.name === "资料" && i.is_dir))
+    assert.ok(content.some((i) => i.name === "课件.pdf" && !i.is_dir))
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })

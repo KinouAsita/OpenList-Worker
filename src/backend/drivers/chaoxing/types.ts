@@ -12,13 +12,21 @@ export interface DriverChaoXingAddition {
 // 手机端学习通上传的文件 content 字段与网页端不同：
 // 网页端 json `"puid": 54321, "size": 12345`
 // 手机端 json `"puid": "54321", "size": "12345"`
+// uploadDate 可能是数字时间戳、字符串时间戳或 "2024-11-06 07:49" 日期字符串
 export interface ChaoXingFileContent {
   folderName?: string
   name?: string
   fileId?: string
   objectId?: string
   size?: number | string
-  uploadDate?: number
+  uploadDate?: number | string
+  thumbnail?: string
+}
+
+export interface ChaoXingLoginResp {
+  status?: boolean
+  msg2?: string
+  mes?: string
 }
 
 export interface ChaoXingFile {

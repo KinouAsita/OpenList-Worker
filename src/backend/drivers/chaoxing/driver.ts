@@ -4,7 +4,7 @@ import {
   calcFileType,
 } from "../../internal/driver/base"
 import { DriverChaoXingAddition, ChaoXingFile } from "./types"
-import { ClientChaoXing } from "./util"
+import { ClientChaoXing, parseChaoXingTimestamp } from "./util"
 
 function fileToItem(f: ChaoXingFile): FileItem {
   const c = f.content
@@ -13,9 +13,7 @@ function fileToItem(f: ChaoXingFile): FileItem {
       name: c.folderName,
       size: 0,
       is_dir: true,
-      modified: f.inserttime
-        ? new Date(f.inserttime).toISOString()
-        : new Date().toISOString(),
+      modified: parseChaoXingTimestamp(f.inserttime),
       sign: String(f.id),
       type: 1,
     }
@@ -25,16 +23,16 @@ function fileToItem(f: ChaoXingFile): FileItem {
     name: c.name || "",
     size: Number(c.size) || 0,
     is_dir: false,
-    modified: c.uploadDate
-      ? new Date(c.uploadDate).toISOString()
-      : new Date().toISOString(),
+    modified: parseChaoXingTimestamp(c.uploadDate),
     sign: `${f.id}$${fileId}`,
     type: calcFileType(c.name || "", false),
+    ...(c.thumbnail ? { thumb: c.thumbnail } : {}),
     raw_url: "",
   }
 }
 
 export class DriverChaoXing implements StorageDriver {
+  private addition: DriverChaoXingAddition
   private client: ClientChaoXing
   private pathCache = new Map<string, string>()
 
@@ -42,11 +40,17 @@ export class DriverChaoXing implements StorageDriver {
     addition: DriverChaoXingAddition,
     persistCookie?: (cookie: string) => void | Promise<void>,
   ) {
+    this.addition = addition
     this.client = new ClientChaoXing(addition, persistCookie)
   }
 
   async init(): Promise<void> {
     await this.client.init()
+  }
+
+  private getRootId(): string {
+    const raw = String(this.addition.root_folder_id ?? "").trim()
+    return raw && raw !== "/" ? raw : "-1"
   }
 
   async list(_virtualPath: string, physicalPath: string): Promise<FileItem[]> {
@@ -143,13 +147,19 @@ export class DriverChaoXing implements StorageDriver {
 
   async move(
     _srcDir: string,
-    dstDir: string,
+    _dstDir: string,
     _names: string[],
     srcPhysical: string,
-    _dstPhysical: string,
+    dstPhysical: string,
   ): Promise<void> {
     const entry = await this.resolveEntry(srcPhysical)
-    await this.client.move(entry.id, await this.pathToId(dstDir), entry.isDir)
+    const dstParts = dstPhysical.split("/").filter(Boolean)
+    const dstParentPath = "/" + dstParts.slice(0, -1).join("/")
+    await this.client.move(
+      entry.id,
+      await this.pathToId(dstParentPath),
+      entry.isDir,
+    )
     this.pathCache.clear()
   }
 
@@ -185,22 +195,28 @@ export class DriverChaoXing implements StorageDriver {
     return { id: String(target.id), isDir: !!target.content.folderName }
   }
 
-  /** 物理路径 → 目录 ID（根目录返回 "-1"） */
+  /** 物理路径 → 目录 ID（根目录返回 root_folder_id 或 "-1"） */
   private async pathToId(physicalPath: string): Promise<string> {
-    const clean = physicalPath.split("/").filter(Boolean).join("/")
-    if (!clean) return "-1"
-    if (this.pathCache.has(clean)) return this.pathCache.get(clean)!
+    const parts = physicalPath.split("/").filter(Boolean)
+    if (parts.length === 0) return this.getRootId()
+    const normalized = "/" + parts.join("/")
+    const cached = this.pathCache.get(normalized)
+    if (cached) return cached
 
-    const parts = clean.split("/")
-    let currentId = "-1"
+    let currentId = this.getRootId()
     for (let i = 0; i < parts.length; i++) {
+      const subPath = "/" + parts.slice(0, i + 1).join("/")
+      const subCached = this.pathCache.get(subPath)
+      if (subCached) {
+        currentId = subCached
+        continue
+      }
       const files = await this.client.getFiles(currentId)
       const target = files.find((f) => f.content.folderName === parts[i])
       if (!target) {
         throw new Error(`[ChaoXing] Directory '${parts[i]}' not found`)
       }
       currentId = String(target.id)
-      const subPath = "/" + parts.slice(0, i + 1).join("/")
       this.pathCache.set(subPath, currentId)
     }
     return currentId
