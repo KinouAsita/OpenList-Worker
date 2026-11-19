@@ -261,7 +261,19 @@ export class ClientChaoXingQBank {
         headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
         body: form.toString(),
       })
-      const data = JSON.parse(raw) as QBankSearchResp
+      const data = JSON.parse(raw) as QBankSearchResp & {
+        status?: boolean | string
+        msg?: string
+      }
+      if (
+        data.status !== undefined &&
+        data.status !== true &&
+        data.status !== "true"
+      ) {
+        throw new Error(
+          `[ChaoXingQBank] search dir=${dirId} failed: ${data.msg || "unknown"}`,
+        )
+      }
       const list = data.questionBankRelationList || []
       out.push(...list)
       if (list.length < 100) break

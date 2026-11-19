@@ -275,9 +275,12 @@ export class DriverChaoXingQBank implements StorageDriver {
         continue
       }
       const items = await this.client.searchAll(currentId)
-      const target = items.find(
-        (it) => it.id > 0 && !it.questionBank && (it.dirName || "").trim() === parts[i],
-      )
+      const sanPart = parts[i].trim().replace(/['"]/g, "")
+      const target = items.find((it) => {
+        if (!(it.id > 0 && !it.questionBank)) return false
+        const dn = (it.dirName || "").trim()
+        return dn === parts[i] || dn.replace(/['"]/g, "") === sanPart
+      })
       if (!target) {
         throw new Error(`[ChaoXingQBank] Directory '${parts[i]}' not found`)
       }
