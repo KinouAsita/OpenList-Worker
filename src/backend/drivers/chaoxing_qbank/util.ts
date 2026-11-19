@@ -9,9 +9,11 @@ import {
 
 const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-const REFERER = "https://mooc2-ans.chaoxing.com/"
+const REFERER = "https://pan-yz.chaoxing.com/"
 const MOOC2_BASE = "https://mooc2-ans.chaoxing.com"
 const MOOC1_BASE = "https://mooc1.chaoxing.com"
+const NOTEYD_BASE = "https://noteyd.chaoxing.com"
+const PANYZ_BASE = "https://pan-yz.chaoxing.com"
 const LOGIN_URL = "https://passport2.chaoxing.com/fanyalogin"
 const LOGIN_KEY = "u2oh6Vu^HWe4_AES"
 const ALL_QTYPES = "0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24,25,26"
@@ -435,22 +437,71 @@ export class ClientChaoXingQBank {
   }
 
   async resolveDownloadUrl(objectId: string): Promise<string> {
+    const statusUrl = `${NOTEYD_BASE}/screen/note_note/files/status/${encodeURIComponent(objectId)}`
     const readUrl = `${MOOC1_BASE}/ueditorupload/read?objectId=${encodeURIComponent(objectId)}`
-    const res = await fetch(readUrl, {
-      method: "GET",
-      redirect: "manual",
-      headers: {
-        Referer: REFERER,
-        "User-Agent": UA,
-      },
-    })
-    const loc = res.headers.get("location")
-    if (!loc) {
-      throw new Error(
-        `[ChaoXingQBank] read?objectId=${objectId} returned HTTP ${res.status} without Location`,
-      )
+    const panExtUrl = `${PANYZ_BASE}/external/m/file/${encodeURIComponent(objectId)}`
+
+    // 1. Primary: noteyd /screen/note_note/files/status/<objectId> works for ALL file types (.wav, .mp3, .jpg, .zip, .txt, etc.)
+    try {
+      const stRes = await fetch(statusUrl, {
+        method: "POST",
+        headers: {
+          Cookie: this.cookie,
+          Referer: REFERER,
+          "User-Agent": UA,
+        },
+      })
+      if (stRes.ok) {
+        const stJson = (await stRes.json()) as { download?: string }
+        if (stJson?.download?.trim()) {
+          return stJson.download.trim()
+        }
+      }
+    } catch {
+      // fall through to fallbacks
     }
-    return loc
+
+    // 2. Fallback 1: mooc1 /ueditorupload/read?objectId=<objectId> (302 Location for non-media files)
+    try {
+      const res = await fetch(readUrl, {
+        method: "GET",
+        redirect: "manual",
+        headers: {
+          Referer: REFERER,
+          "User-Agent": UA,
+        },
+      })
+      const loc = res.headers.get("location")
+      if (loc?.trim()) {
+        return loc.trim()
+      }
+    } catch {
+      // fall through
+    }
+
+    // 3. Fallback 2: pan-yz /external/m/file/<objectId>
+    try {
+      const extRes = await fetch(panExtUrl, {
+        method: "GET",
+        headers: {
+          Referer: REFERER,
+          "User-Agent": UA,
+        },
+      })
+      if (extRes.ok) {
+        const html = await extRes.text()
+        const m = html.match(/['"]download['"]\s*:\s*['"](https?:\/\/[^'"]+)['"]/)
+        if (m?.[1] && m[1].includes("at_=")) {
+          return m[1].trim()
+        }
+      }
+    } catch {
+      // fall through
+    }
+
+    throw new Error(
+      `[ChaoXingQBank] failed to resolve download url for objectId=${objectId}`,
+    )
   }
 
   downloadHeaders(): Record<string, string> {

@@ -89,11 +89,17 @@ test("DriverChaoXingQBank supports login, cpi discovery, mkdir, upload (.vtt sta
         { status: 200 },
       )
     }
+    if (url.includes("/screen/note_note/files/status/")) {
+      return new Response(
+        JSON.stringify({
+          status: true,
+          download: "https://d0.cldisk.com/download/obj-qb-1?at_=123",
+        }),
+        { status: 200 },
+      )
+    }
     if (url.includes("/ueditorupload/read")) {
-      const headers = new Headers({
-        location: "https://d0.cldisk.com/download/obj-qb-1?at_=123",
-      })
-      return new Response(null, { status: 302, headers })
+      return new Response("<html><title>浏览</title></html>", { status: 200 })
     }
     if (url.includes("/mooc2-ans/qbank/batch-updatestatus")) {
       const body = new URLSearchParams(String(init?.body || ""))
