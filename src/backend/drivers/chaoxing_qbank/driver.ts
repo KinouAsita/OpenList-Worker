@@ -203,8 +203,23 @@ export class DriverChaoXingQBank implements StorageDriver {
     const name = parts.pop() || "file"
     const parentPath = "/" + parts.join("/")
     const parentId = await this.pathToId(parentPath)
+    const existingItems = await this.list("", parentPath)
+    const existing = existingItems.find((i) => !i.is_dir && i.name === name)
+    const existingQid = existing ? existing.sign.split("$")[0] || "" : ""
     const objId = await this.client.uploadAttachment(parentId, name, content)
-    await this.client.saveQuestionFile(parentId, "", name, objId, content.byteLength)
+    try {
+      await this.client.saveQuestionFile(
+        parentId,
+        existingQid,
+        name,
+        objId,
+        content.byteLength,
+      )
+    } catch (e: any) {
+      if (!existingQid || !String(e?.message || "").includes("当前路径已存在相同题目")) {
+        throw e
+      }
+    }
     this.pathCache.clear()
   }
 
