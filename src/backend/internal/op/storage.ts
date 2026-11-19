@@ -26,6 +26,7 @@ import { DriverQuarkUcTv } from "../../drivers/quark_uc_tv/driver"
 import { Driver123Open } from "../../drivers/123_open/driver"
 import { DriverTeambition } from "../../drivers/teambition/driver"
 import { DriverChaoXing } from "../../drivers/chaoxing/driver"
+import { DriverChaoXingQBank } from "../../drivers/chaoxing_qbank/driver"
 import { DriverGooglePhoto } from "../../drivers/google_photo/driver"
 import { DriverFebBox } from "../../drivers/febbox/driver"
 import { DriverDegoo } from "../../drivers/degoo/driver"
@@ -475,6 +476,40 @@ async function createDriver(
         await saveDb(db)
       } catch (e) {
         console.warn("[febbox] failed to persist refresh_token:", e)
+      }
+    })
+    await driver.init?.()
+  } else if (
+    normDriver === "chaoxingqbank" ||
+    normDriver === "chaoxing_qbank"
+  ) {
+    const addition = parseAddition(storageConfig)
+    driver = new DriverChaoXingQBank(addition, async (cookie: string) => {
+      try {
+        if (deferredTokenPersistence.has(storageConfig)) {
+          storageConfig.addition = JSON.stringify({
+            ...parseAddition(storageConfig),
+            cookie,
+          })
+          return
+        }
+        const db = await getDb()
+        const st = (db.storages || []).find(
+          (s: any) => s.id === storageConfig?.id,
+        )
+        if (!st) return
+        const stAddition =
+          typeof st.addition === "string"
+            ? JSON.parse(st.addition || "{}")
+            : st.addition || {}
+        stAddition.cookie = cookie
+        st.addition = JSON.stringify(stAddition)
+        if (storageConfig && typeof storageConfig === "object") {
+          storageConfig.addition = st.addition
+        }
+        await saveDb(db)
+      } catch (e) {
+        console.warn("[chaoxing_qbank] failed to persist cookie:", e)
       }
     })
     await driver.init?.()

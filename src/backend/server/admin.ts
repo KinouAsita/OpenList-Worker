@@ -127,6 +127,7 @@ export const normalizeDriver = (driverName: string): string => {
   const norm = (driverName || "").toLowerCase().replace(/[^a-z0-9]/g, "")
   // 纯中文驱动名无法归一化为 a-z0-9，先做中文别名匹配
   if ((driverName || "").includes("城通")) return "CtFile"
+  if ((driverName || "").includes("超星题库")) return "ChaoXingQBank"
   if ((driverName || "").includes("超星")) return "ChaoXingGroupDrive"
   if (!norm) return ""
   const available = Object.keys(driverConfigs)
@@ -195,6 +196,7 @@ export const normalizeDriver = (driverName: string): string => {
   if (norm.includes("mediatrack") || norm.includes("fenmiao"))
     return "MediaTrack"
   if (norm.includes("alias")) return "Alias"
+  if (norm === "chaoxingqbank") return "ChaoXingQBank"
   if (norm.startsWith("chaoxing")) return "ChaoXingGroupDrive"
   return driverName || ""
 }
@@ -559,6 +561,7 @@ adminRouter.get("/driver/names", (c) => {
       "GitHub Releases",
       "CNB Releases",
       "ChaoXingGroupDrive",
+      "ChaoXingQBank",
     ],
   })
 })
@@ -4735,6 +4738,65 @@ const driverConfigs: Record<string, any> = {
       no_upload: false,
       need_ms: false,
       default_root: "-1",
+    },
+  },
+  ChaoXingQBank: {
+    name: "ChaoXingQBank",
+    default_mount_path: "/chaoxing_qbank",
+    common: [
+      ...BASE_FIELDS,
+      ENABLE_SIGN_FIELD,
+      DISABLE_INDEX_FIELD,
+      ...buildProxyFields("ChaoXingQBank"),
+      DISABLE_PROXY_SIGN_FIELD,
+      SEED_POLICY_FIELD,
+    ],
+    additional: [
+      {
+        name: "root_dir_id",
+        type: "string",
+        default: "0",
+        required: false,
+        help: "根文件夹 dirId，默认为 0（题库根目录）",
+      },
+      {
+        name: "user_name",
+        type: "string",
+        default: "",
+        required: true,
+        help: "超星学习通账号（手机号/用户名）",
+      },
+      {
+        name: "password",
+        type: "string",
+        default: "",
+        required: true,
+        help: "超星学习通密码",
+      },
+      {
+        name: "course_id",
+        type: "string",
+        default: "",
+        required: true,
+        help: "超星课程题库 URL 中的 courseid 参数",
+      },
+      {
+        name: "cookie",
+        type: "text",
+        default: "",
+        required: false,
+        help: "可留空由程序自动登录获取；也可手动填入 Cookie",
+      },
+    ],
+    config: {
+      name: "ChaoXingQBank",
+      local_sort: true,
+      only_local: false,
+      only_proxy: false,
+      no_cache: false,
+      no_upload: false,
+      need_ms: false,
+      default_root: "0",
     },
   },
 }
