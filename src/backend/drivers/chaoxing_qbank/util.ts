@@ -162,7 +162,15 @@ export function formatQuestionContent(
   if (encParts) {
     href += `&fncs_parts=${encodeURIComponent(encParts)}`
   }
-  return `<p>${escName}</p><p><a class="ans-attach-online" href="${escapeHtml(href)}">${escName}</a></p>`
+  let out = `<p>${escName}</p><p><a class="ans-attach-online" href="${escapeHtml(href)}">${escName}</a></p>`
+  if (parts && parts.length > 1) {
+    for (let i = 1; i < parts.length; i++) {
+      const partHref = `/ueditorupload/read?objectId=${encodeURIComponent(parts[i].objectId)}`
+      const partLabel = escapeHtml(`${fileName}.part${i}`)
+      out += `<p><a class="ans-attach-online" href="${escapeHtml(partHref)}">${partLabel}</a></p>`
+    }
+  }
+  return out
 }
 
 export function parseQuestionFileMeta(content: string): {
