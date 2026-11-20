@@ -155,6 +155,94 @@ async function proxyUpstream(
 ) {
   const proxyRange = opts.proxyRange ?? false
   const driver = opts.driver ?? ""
+
+  // Multi-part virtual file streaming (e.g. ChaoXingQBank >1GiB chunked files):
+  // Lazily fetches only the overlapping chunk spans with full HTTP 206 Range seeking.
+  if (Array.isArray(fileItem.raw_parts) && fileItem.raw_parts.length > 1) {
+    const rawParts = fileItem.raw_parts as Array<{
+      size: number
+      resolveUrl: () => Promise<string>
+    }>
+    const totalSize =
+      Number(fileItem.size) > 0
+        ? Number(fileItem.size)
+        : rawParts.reduce((acc, p) => acc + p.size, 0)
+    const rangeHeader = c.req.header("Range")
+    let start = 0
+    let end = totalSize - 1
+    let status = 200
+    if (rangeHeader && totalSize > 0) {
+      const parsed = parseRangeHeader(rangeHeader, totalSize)
+      start = parsed.start
+      end = parsed.end
+      status = 206
+    }
+    const baseHeaders: Record<string, string> = buildUpstreamHeaders({
+      rawUrlHeaders: fileItem.raw_url_headers,
+      rangeHeader: undefined,
+      proxyRange: false,
+      ignoreHeaders: opts.ignoreHeaders,
+    })
+
+    const spans: Array<{
+      resolveUrl: () => Promise<string>
+      start: number
+      end: number
+    }> = []
+    let offset = 0
+    for (const p of rawParts) {
+      const pStart = offset
+      const pEnd = offset + p.size - 1
+      offset += p.size
+      if (pEnd < start || pStart > end) continue
+      spans.push({
+        resolveUrl: p.resolveUrl,
+        start: Math.max(0, start - pStart),
+        end: Math.min(p.size - 1, end - pStart),
+      })
+    }
+
+    const contentLen = Math.max(0, end - start + 1)
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        try {
+          for (const sp of spans) {
+            const dlUrl = await sp.resolveUrl()
+            const res = await safeProxyFetch(
+              dlUrl,
+              { ...baseHeaders, Range: `bytes=${sp.start}-${sp.end}` },
+              trustedHosts,
+            )
+            if (!res.ok && res.status !== 206) {
+              throw new Error(`Upstream chunk HTTP ${res.status}`)
+            }
+            if (res.body) {
+              const reader = res.body.getReader()
+              while (true) {
+                const { done, value } = await reader.read()
+                if (done) break
+                if (value) controller.enqueue(value)
+              }
+            }
+          }
+          controller.close()
+        } catch (err) {
+          controller.error(err)
+        }
+      },
+    })
+
+    const resHeaders = new Headers({
+      "Content-Type": "application/octet-stream",
+      "Accept-Ranges": "bytes",
+      "Content-Length": String(contentLen),
+      "Content-Disposition": `inline; filename*=UTF-8''${encodeURIComponent(fileItem.name || "file")}`,
+    })
+    if (status === 206) {
+      resHeaders.set("Content-Range", `bytes ${start}-${end}/${totalSize}`)
+    }
+    return new Response(stream, { status, headers: resHeaders })
+  }
   // ---- 平台载荷上限保护 ----
   // native_proxy 会把整份文件当作云函数响应体回传，超过平台上限时请求根本到不了
   // 本函数（平台直接返回 413 错误页），因此在这里提前决策：能直连就降级 302，

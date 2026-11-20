@@ -537,6 +537,8 @@ export class ClientChaoXingQBank {
     fileName: string,
     objectId: string,
     size: number,
+    md5Hex = "",
+    parts?: QBankFilePart[],
   ): Promise<string> {
     const cpi = await this.ensureCpi()
     const form = new URLSearchParams({
@@ -548,7 +550,7 @@ export class ClientChaoXingQBank {
       originType: "4",
       qType: "0",
       courseQuestionTypeId: "0",
-      content: formatQuestionContent(fileName, objectId, size),
+      content: formatQuestionContent(fileName, objectId, size, md5Hex, parts),
       answer: "<p>ok</p>",
     })
     const saveUrl = `${MOOC2_BASE}/mooc2-ans/qbank/add_question?questionBankId=${encodeURIComponent(questionBankId)}&courseid=${encodeURIComponent(this.addition.course_id)}&microTopicId=0&saveAsNew=false&promptId=-1&useAi=0&autoScore=0&aiOptimized=0`

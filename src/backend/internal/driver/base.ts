@@ -10,6 +10,8 @@ export interface FileItem {
   raw_url?: string
   /** Headers that must accompany the raw_url request (e.g. Cookie, Referer for cloud drives) */
   raw_url_headers?: Record<string, string>
+  /** Optional multi-part segments for transparent concatenated streaming with HTTP Range support */
+  raw_parts?: Array<{ size: number; resolveUrl: () => Promise<string> }>
   /** When the driver could not obtain a download link, the concrete reason (for better 404 reporting) */
   raw_url_error?: string
   /** Whole-file hash (e.g. md5) used for rapid upload */

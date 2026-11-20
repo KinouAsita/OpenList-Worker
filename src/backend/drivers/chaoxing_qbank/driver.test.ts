@@ -189,3 +189,87 @@ test("normalizePhoneAndCountryCode supports +44/+1/+852/+86", () => {
     countryCode: "852",
   })
 })
+
+test("DriverChaoXingQBank supports >1GiB chunked put, raw_parts get, and rename preserving fncs_parts", async () => {
+  let objSeq = 0
+  let qContent = ""
+  const originalFetch = globalThis.fetch
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.includes("/fanyalogin")) {
+      return new Response(JSON.stringify({ status: true }), {
+        status: 200,
+        headers: { "set-cookie": "_d=token_ok; Path=/" },
+      })
+    }
+    if (url.includes("/mooc2-ans/qbank/questionlist")) {
+      return new Response(`<input id="cpi" value="12345" />`, { status: 200 })
+    }
+    if (url.includes("/mooc2-ans/qbank/create-question")) {
+      return new Response(
+        `<input id="uploadEnc" value="aabbcc" /><input id="uploadTimeStamp" value="1700000000" /><input id="uploadUid" value="1" />`,
+        { status: 200 },
+      )
+    }
+    if (url.includes("/upload-ans/ueditorupload/attachment")) {
+      objSeq++
+      return new Response(
+        JSON.stringify({ state: "SUCCESS", objectid: `chunkobj${objSeq}` }),
+        { status: 200 },
+      )
+    }
+    if (url.includes("/mooc2-ans/qbank/add_question")) {
+      const form = new URLSearchParams(String(init?.body || ""))
+      qContent = form.get("content") || ""
+      return new Response(JSON.stringify({ status: true, qid: "q-mp-1" }), {
+        status: 200,
+      })
+    }
+    if (url.includes("/mooc2-ans/qbank/search")) {
+      const list = qContent
+        ? [{ id: 0, pid: 0, questionBank: { id: "q-mp-1", content: qContent } }]
+        : []
+      return new Response(
+        JSON.stringify({ total: list.length, status: true, questionBankRelationList: list }),
+        { status: 200 },
+      )
+    }
+    if (url.includes("/screen/note_note/files/status/")) {
+      const oid = url.split("/").pop()
+      return new Response(
+        JSON.stringify({ download: `https://d0.cldisk.com/dl/${oid}` }),
+        { status: 200 },
+      )
+    }
+    return new Response("not found", { status: 404 })
+  }) as typeof fetch
+
+  try {
+    const drv = new DriverChaoXingQBank({
+      user_name: "u",
+      password: "p",
+      course_id: "269436499",
+    })
+    drv.chunkThreshold = 200
+    drv.chunkSize = 100
+    await drv.init()
+
+    const payload = new Uint8Array(350)
+    await drv.put("/movie.mkv", "/movie.mkv", payload)
+    assert.equal(objSeq, 4)
+    assert.ok(qContent.includes("fncs_parts="))
+    assert.ok(qContent.includes("objectId=chunkobj4"))
+
+    const got = await drv.get("/movie.mkv", "/movie.mkv")
+    assert.equal(got.size, 350)
+    assert.equal(got.raw_parts?.length, 4)
+    assert.equal(await got.raw_parts?.[2].resolveUrl(), "https://d0.cldisk.com/dl/chunkobj3")
+
+    await drv.rename("/movie.mkv", "/movie.mkv", "movie_renamed.mkv")
+    assert.ok(qContent.includes("fncs_parts="))
+    assert.ok(qContent.includes("objectId=chunkobj4"))
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

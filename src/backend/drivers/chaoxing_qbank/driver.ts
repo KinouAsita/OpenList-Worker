@@ -5,7 +5,14 @@ import {
 } from "../../internal/driver/base"
 import { parseChaoXingTimestamp } from "../chaoxing/util"
 import { DriverChaoXingQBankAddition, QBankRelationItem } from "./types"
-import { ClientChaoXingQBank, parseQuestionFileMeta } from "./util"
+import {
+  ClientChaoXingQBank,
+  QBankFilePart,
+  parseQuestionFileMeta,
+} from "./util"
+
+const DEFAULT_CHUNK_THRESHOLD = 1024 * 1024 * 1024 // 1 GiB
+const DEFAULT_CHUNK_SIZE = 512 * 1024 * 1024 // 512 MiB
 
 function relationToItem(it: QBankRelationItem): FileItem | null {
   if (it.id > 0 && !it.questionBank) {
@@ -23,7 +30,7 @@ function relationToItem(it: QBankRelationItem): FileItem | null {
   if (it.questionBank) {
     const meta = parseQuestionFileMeta(it.questionBank.content || "")
     if (!meta) return null
-    return {
+    const item: FileItem = {
       name: meta.name,
       size: meta.size,
       is_dir: false,
@@ -34,6 +41,11 @@ function relationToItem(it: QBankRelationItem): FileItem | null {
       type: calcFileType(meta.name, false),
       raw_url: "",
     }
+    if (meta.md5) {
+      item.hash = meta.md5
+      item.hashes = { md5: meta.md5 }
+    }
+    return item
   }
   return null
 }
@@ -42,6 +54,8 @@ export class DriverChaoXingQBank implements StorageDriver {
   private addition: DriverChaoXingQBankAddition
   private client: ClientChaoXingQBank
   private pathCache = new Map<string, string>()
+  public chunkThreshold = DEFAULT_CHUNK_THRESHOLD
+  public chunkSize = DEFAULT_CHUNK_SIZE
 
   constructor(
     addition: DriverChaoXingQBankAddition,
@@ -77,22 +91,35 @@ export class DriverChaoXingQBank implements StorageDriver {
     const parentPath = "/" + parts.slice(0, -1).join("/")
 
     try {
-      const items = await this.list("", parentPath)
-      const target = items.find((i) => i.name === rawName)
-      if (target) {
-        if (!target.is_dir) {
-          const objId = target.sign.split("$")[1] || ""
-          if (objId) {
-            try {
-              target.raw_url = await this.client.resolveDownloadUrl(objId)
-              target.raw_url_headers = this.client.downloadHeaders()
-            } catch {
-              target.raw_url_error =
-                "[ChaoXingQBank] failed to resolve download url"
+      const parentId = await this.pathToId(parentPath)
+      const rawItems = await this.client.searchAll(parentId)
+      for (const it of rawItems) {
+        const mapped = relationToItem(it)
+        if (!mapped || mapped.name !== rawName) continue
+        if (!mapped.is_dir && it.questionBank) {
+          const meta = parseQuestionFileMeta(it.questionBank.content || "")
+          const fileParts = meta?.parts || []
+          if (fileParts.length > 1) {
+            mapped.raw_url = `qbank-multipart://${meta?.objectId || ""}`
+            mapped.raw_url_headers = this.client.downloadHeaders()
+            mapped.raw_parts = fileParts.map((p) => ({
+              size: p.size,
+              resolveUrl: () => this.client.resolveDownloadUrl(p.objectId),
+            }))
+          } else {
+            const objId = meta?.objectId || mapped.sign.split("$")[1] || ""
+            if (objId) {
+              try {
+                mapped.raw_url = await this.client.resolveDownloadUrl(objId)
+                mapped.raw_url_headers = this.client.downloadHeaders()
+              } catch {
+                mapped.raw_url_error =
+                  "[ChaoXingQBank] failed to resolve download url"
+              }
             }
           }
         }
-        return target
+        return mapped
       }
     } catch {
       // fall through
@@ -146,6 +173,8 @@ export class DriverChaoXingQBank implements StorageDriver {
         newName,
         entry.objectId,
         entry.size,
+        entry.md5,
+        entry.parts,
       )
     }
     this.pathCache.clear()
@@ -184,6 +213,8 @@ export class DriverChaoXingQBank implements StorageDriver {
           dstName,
           entry.objectId,
           entry.size,
+          entry.md5,
+          entry.parts,
         )
       }
     }
@@ -206,17 +237,43 @@ export class DriverChaoXingQBank implements StorageDriver {
     const existingItems = await this.list("", parentPath)
     const existing = existingItems.find((i) => !i.is_dir && i.name === name)
     const existingQid = existing ? existing.sign.split("$")[0] || "" : ""
-    const objId = await this.client.uploadAttachment(parentId, name, content)
+
+    const uploadedParts: QBankFilePart[] = []
+    if (content.byteLength <= this.chunkThreshold) {
+      const objId = await this.client.uploadAttachment(parentId, name, content)
+      uploadedParts.push({ objectId: objId, size: content.byteLength })
+    } else {
+      let offset = 0
+      let idx = 0
+      while (offset < content.byteLength) {
+        const end = Math.min(offset + this.chunkSize, content.byteLength)
+        const slice = content.subarray(offset, end)
+        const objId = await this.client.uploadAttachment(
+          parentId,
+          `${name}.part${idx}`,
+          slice,
+        )
+        uploadedParts.push({ objectId: objId, size: slice.byteLength })
+        offset = end
+        idx++
+      }
+    }
+
     try {
       await this.client.saveQuestionFile(
         parentId,
         existingQid,
         name,
-        objId,
+        uploadedParts[0].objectId,
         content.byteLength,
+        "",
+        uploadedParts,
       )
     } catch (e: any) {
-      if (!existingQid || !String(e?.message || "").includes("当前路径已存在相同题目")) {
+      if (
+        !existingQid ||
+        !String(e?.message || "").includes("当前路径已存在相同题目")
+      ) {
         throw e
       }
     }
@@ -230,33 +287,47 @@ export class DriverChaoXingQBank implements StorageDriver {
     isDir: boolean
     objectId: string
     size: number
+    md5: string
+    parts: QBankFilePart[]
   }> {
     const parts = physicalPath.split("/").filter(Boolean)
     const name = parts[parts.length - 1]
     const parentPath = "/" + parts.slice(0, -1).join("/")
     const parentId = await this.pathToId(parentPath)
-    const items = await this.list("", parentPath)
-    const target = items.find((i) => i.name === name)
-    if (!target) throw new Error(`[ChaoXingQBank] '${name}' not found`)
-    if (target.is_dir) {
-      return {
-        id: target.sign,
-        parentId,
-        name: target.name,
-        isDir: true,
-        objectId: "",
-        size: 0,
+    const rawItems = await this.client.searchAll(parentId)
+    for (const it of rawItems) {
+      if (it.id > 0 && !it.questionBank) {
+        const dn = (it.dirName || "").trim()
+        if (dn === name) {
+          return {
+            id: String(it.id),
+            parentId,
+            name: dn,
+            isDir: true,
+            objectId: "",
+            size: 0,
+            md5: "",
+            parts: [],
+          }
+        }
+      }
+      if (it.questionBank) {
+        const meta = parseQuestionFileMeta(it.questionBank.content || "")
+        if (meta && meta.name === name) {
+          return {
+            id: it.questionBank.id,
+            parentId,
+            name: meta.name,
+            isDir: false,
+            objectId: meta.objectId,
+            size: meta.size,
+            md5: meta.md5,
+            parts: meta.parts,
+          }
+        }
       }
     }
-    const [qid, objId = ""] = target.sign.split("$")
-    return {
-      id: qid,
-      parentId,
-      name: target.name,
-      isDir: false,
-      objectId: objId,
-      size: target.size,
-    }
+    throw new Error(`[ChaoXingQBank] '${name}' not found`)
   }
 
   private async pathToId(physicalPath: string): Promise<string> {
