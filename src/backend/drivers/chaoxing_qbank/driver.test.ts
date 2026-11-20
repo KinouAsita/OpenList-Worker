@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DriverChaoXingQBank } from "./driver"
+import { normalizePhoneAndCountryCode } from "./util"
 
 test("DriverChaoXingQBank supports login, cpi discovery, mkdir, upload (.vtt staged), list, 302 get, rename, and remove", async () => {
   const dirs = new Map<number, { id: number; pid: number; name: string }>([
@@ -161,6 +162,77 @@ test("DriverChaoXingQBank supports login, cpi discovery, mkdir, upload (.vtt sta
       "/sub_folder_more_than_16_chars",
     )
     assert.equal(itemsAfterRemove.length, 0)
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})
+
+test("normalizePhoneAndCountryCode supports +44/+1/+852/+86", () => {
+  assert.deepEqual(normalizePhoneAndCountryCode("13800138000", ""), {
+    phone: "13800138000",
+    countryCode: "86",
+  })
+  assert.deepEqual(normalizePhoneAndCountryCode("7700900123", "+44"), {
+    phone: "7700900123",
+    countryCode: "44",
+  })
+  assert.deepEqual(normalizePhoneAndCountryCode("+44 7700900123", "86"), {
+    phone: "7700900123",
+    countryCode: "44",
+  })
+  assert.deepEqual(normalizePhoneAndCountryCode("+1-5551234567", ""), {
+    phone: "5551234567",
+    countryCode: "1",
+  })
+  assert.deepEqual(normalizePhoneAndCountryCode("+852 91234567", ""), {
+    phone: "91234567",
+    countryCode: "852",
+  })
+})
+
+test("ChaoXingQBank SMS login by code with international country code", async () => {
+  const originalFetch = globalThis.fetch
+  let persisted = ""
+  let gotCC = ""
+  let gotPhone = ""
+
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString()
+    if (url.includes("/fanyaloginbycode")) {
+      const form = new URLSearchParams(String(init?.body || ""))
+      gotCC = form.get("countrycode") || ""
+      gotPhone = form.get("uname") || ""
+      return new Response(JSON.stringify({ status: true }), {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "set-cookie": "_d=sms_ok; Path=/",
+        },
+      })
+    }
+    if (url.includes("/mooc2-ans/qbank/questionlist")) {
+      return new Response(`<input id="cpi" value="888999" />`, { status: 200 })
+    }
+    return new Response("not found", { status: 404 })
+  }) as typeof fetch
+
+  try {
+    const drv = new DriverChaoXingQBank(
+      {
+        login_type: "sms",
+        country_code: "+44",
+        user_name: "7700900123",
+        sms_code: "654321",
+        course_id: "269436499",
+      },
+      (c) => {
+        persisted = c
+      },
+    )
+    await drv.init()
+    assert.equal(gotCC, "44")
+    assert.equal(gotPhone, "7700900123")
+    assert.ok(persisted.includes("_d=sms_ok"))
   } finally {
     globalThis.fetch = originalFetch
   }

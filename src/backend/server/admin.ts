@@ -4753,6 +4753,21 @@ const driverConfigs: Record<string, any> = {
     ],
     additional: [
       {
+        name: "login_type",
+        type: "select",
+        options: "password,sms",
+        default: "password",
+        required: false,
+        help: "登录方式：password（账号密码）或 sms（手机短信验证码）",
+      },
+      {
+        name: "country_code",
+        type: "string",
+        default: "86",
+        required: false,
+        help: "手机区号（支持 +86、+1、+44、+852、+886、+81 等，默认 86）",
+      },
+      {
         name: "root_dir_id",
         type: "string",
         default: "0",
@@ -4763,15 +4778,22 @@ const driverConfigs: Record<string, any> = {
         name: "user_name",
         type: "string",
         default: "",
-        required: true,
-        help: "超星学习通账号（手机号/用户名）",
+        required: false,
+        help: "超星学习通账号（手机号/用户名，支持直接填写 +44 7xxxx）",
       },
       {
         name: "password",
         type: "string",
         default: "",
-        required: true,
-        help: "超星学习通密码",
+        required: false,
+        help: "超星学习通密码（密码登录时填写，验证码或 Cookie 登录可留空）",
+      },
+      {
+        name: "sms_code",
+        type: "string",
+        default: "",
+        required: false,
+        help: "短信验证码（因超星发短信需滑块验证，请先在超星登录页/学习通 App 获取后填入此处并保存）",
       },
       {
         name: "course_id",

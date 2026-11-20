@@ -1,6 +1,9 @@
 export interface DriverChaoXingQBankAddition {
-  user_name: string
-  password: string
+  login_type?: "password" | "sms" | string
+  country_code?: string
+  user_name?: string
+  password?: string
+  sms_code?: string
   course_id: string
   root_dir_id?: string
   cookie?: string
