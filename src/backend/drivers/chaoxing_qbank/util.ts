@@ -15,8 +15,6 @@ const MOOC1_BASE = "https://mooc1.chaoxing.com"
 const NOTEYD_BASE = "https://noteyd.chaoxing.com"
 const PANYZ_BASE = "https://pan-yz.chaoxing.com"
 const LOGIN_URL = "https://passport2.chaoxing.com/fanyalogin"
-const LOGIN_BY_CODE_URL = "https://passport2.chaoxing.com/fanyaloginbycode"
-const SEND_SMS_URL = "https://passport2.chaoxing.com/num/phonecode"
 const LOGIN_KEY = "u2oh6Vu^HWe4_AES"
 const ALL_QTYPES = "0,1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,23,24,25,26"
 
@@ -178,21 +176,7 @@ export class ClientChaoXingQBank {
     if (!this.addition.course_id?.trim()) {
       throw new Error("[ChaoXingQBank] course_id is required")
     }
-    const smsCode = (this.addition.sms_code || "").trim()
-    const loginType = (this.addition.login_type || "password").trim().toLowerCase()
-    if (smsCode) {
-      await this.loginByCode(smsCode)
-      this.addition.sms_code = ""
-    } else if (loginType === "sms" && !this.cookie) {
-      await this.sendSmsCode()
-      const { phone, countryCode } = normalizePhoneAndCountryCode(
-        this.addition.user_name,
-        this.addition.country_code,
-      )
-      throw new Error(
-        `[ChaoXingQBank] 验证码已发送至 +${countryCode} ${phone}，请填入 sms_code 后再次保存完成登录`,
-      )
-    } else if (!this.cookie) {
+    if (!this.cookie) {
       await this.login()
     }
     await this.ensureCpi()
@@ -246,94 +230,6 @@ export class ClientChaoXingQBank {
     const cookies = extractSetCookies(res.headers)
     if (cookies.length === 0) {
       throw new Error("[ChaoXingQBank] login succeeded but no Set-Cookie returned")
-    }
-    this.cookie = cookies.join("; ")
-    await this.persistCookie?.(this.cookie)
-  }
-
-  async sendSmsCode(): Promise<void> {
-    const { phone, countryCode } = normalizePhoneAndCountryCode(
-      this.addition.user_name,
-      this.addition.country_code,
-    )
-    if (!phone) {
-      throw new Error("[ChaoXingQBank] user_name (phone number) is required for SMS login")
-    }
-    const u = `${SEND_SMS_URL}?phone=${encodeURIComponent(phone)}&code=&type=1&needcode=false&countrycode=${encodeURIComponent(countryCode)}&validate=&fid=-1`
-    const res = await fetch(u, {
-      method: "GET",
-      headers: {
-        "User-Agent": UA,
-        Referer: "https://passport2.chaoxing.com/login",
-      },
-    })
-    const raw = (await res.text()).trim()
-    try {
-      const data = JSON.parse(raw) as { result?: boolean | string | number; msg?: string }
-      if (data.result === true || data.result === "true" || data.result === 1) {
-        return
-      }
-      const msg = (data.msg || raw).trim()
-      if (msg.includes("验证串") || msg.toLowerCase().includes("validate")) {
-        throw new Error(
-          `[ChaoXingQBank] 超星发送短信需要人机滑块验证（${msg}）。请在超星官方登录页 (https://passport2.chaoxing.com/login) 或学习通 App 获取短信验证码后，直接将验证码填入 sms_code 并保存即可完成登录`,
-        )
-      }
-      throw new Error(`[ChaoXingQBank] send SMS failed: ${msg}`)
-    } catch (e: any) {
-      if (e instanceof Error && e.message.startsWith("[ChaoXingQBank]")) {
-        throw e
-      }
-      if (raw.includes("result:true") || raw.includes('"result":true')) {
-        return
-      }
-      throw new Error(`[ChaoXingQBank] send SMS failed: ${raw}`)
-    }
-  }
-
-  async loginByCode(verCode: string): Promise<void> {
-    const { phone, countryCode } = normalizePhoneAndCountryCode(
-      this.addition.user_name,
-      this.addition.country_code,
-    )
-    const code = verCode.trim()
-    if (!phone || !code) {
-      throw new Error("[ChaoXingQBank] user_name and sms_code are required for SMS login")
-    }
-    const encCode = await aesCbcEncryptBase64(code, LOGIN_KEY)
-    const body = new URLSearchParams({
-      fid: "-1",
-      uname: phone,
-      verCode: encodeURIComponent(encCode),
-      refer: "https://i.chaoxing.com",
-      doubleFactorLogin: "0",
-      independentNameId: "0",
-      countrycode: countryCode,
-    })
-
-    const res = await fetch(LOGIN_BY_CODE_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
-        "User-Agent": UA,
-        Referer: "https://passport2.chaoxing.com/login",
-      },
-      body: body.toString(),
-    })
-    const data = (await res.json()) as {
-      status?: boolean
-      msg2?: string
-      mes?: string
-    }
-    if (!data.status) {
-      throw new Error(
-        `[ChaoXingQBank] SMS login failed: ${data.msg2 || data.mes || "unknown error"}`,
-      )
-    }
-
-    const cookies = extractSetCookies(res.headers)
-    if (cookies.length === 0) {
-      throw new Error("[ChaoXingQBank] SMS login succeeded but no Set-Cookie returned")
     }
     this.cookie = cookies.join("; ")
     await this.persistCookie?.(this.cookie)

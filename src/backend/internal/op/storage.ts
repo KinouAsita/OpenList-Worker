@@ -490,7 +490,6 @@ async function createDriver(
           storageConfig.addition = JSON.stringify({
             ...parseAddition(storageConfig),
             cookie,
-            sms_code: "",
           })
           return
         }
@@ -504,7 +503,6 @@ async function createDriver(
             ? JSON.parse(st.addition || "{}")
             : st.addition || {}
         stAddition.cookie = cookie
-        stAddition.sms_code = ""
         st.addition = JSON.stringify(stAddition)
         if (storageConfig && typeof storageConfig === "object") {
           storageConfig.addition = st.addition
