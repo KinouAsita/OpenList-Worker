@@ -114,13 +114,54 @@ function unescapeHtml(s: string): string {
     .replace(/&#39;/g, "'")
 }
 
+export interface QBankFilePart {
+  objectId: string
+  size: number
+}
+
+export function encodeQBankParts(parts?: QBankFilePart[]): string {
+  if (!parts || parts.length <= 1) return ""
+  return parts.map((p) => `${p.objectId}:${p.size}`).join(",")
+}
+
+export function parseQBankParts(
+  raw: string,
+  fallbackObjectId: string,
+  fallbackSize: number,
+): QBankFilePart[] {
+  const s = (raw || "").trim()
+  if (s) {
+    const out: QBankFilePart[] = []
+    for (const tok of s.split(",")) {
+      const idx = tok.indexOf(":")
+      if (idx <= 0) continue
+      const oid = tok.slice(0, idx).trim()
+      const sz = Number(tok.slice(idx + 1).trim())
+      if (oid && Number.isFinite(sz) && sz > 0) {
+        out.push({ objectId: oid, size: sz })
+      }
+    }
+    if (out.length > 0) return out
+  }
+  return fallbackObjectId ? [{ objectId: fallbackObjectId, size: fallbackSize }] : []
+}
+
 export function formatQuestionContent(
   fileName: string,
   objectId: string,
   size: number,
+  md5Hex = "",
+  parts?: QBankFilePart[],
 ): string {
   const escName = escapeHtml(fileName)
-  const href = `/ueditorupload/read?objectId=${encodeURIComponent(objectId)}&fncs_size=${size}&fncs_name=${encodeURIComponent(fileName)}`
+  let href = `/ueditorupload/read?objectId=${encodeURIComponent(objectId)}&fncs_size=${size}&fncs_name=${encodeURIComponent(fileName)}`
+  if (md5Hex.trim()) {
+    href += `&fncs_md5=${encodeURIComponent(md5Hex.trim())}`
+  }
+  const encParts = encodeQBankParts(parts)
+  if (encParts) {
+    href += `&fncs_parts=${encodeURIComponent(encParts)}`
+  }
   return `<p>${escName}</p><p><a class="ans-attach-online" href="${escapeHtml(href)}">${escName}</a></p>`
 }
 
@@ -128,10 +169,14 @@ export function parseQuestionFileMeta(content: string): {
   name: string
   objectId: string
   size: number
+  md5: string
+  parts: QBankFilePart[]
 } | null {
   let objectId = ""
   let name = ""
   let size = 0
+  let md5 = ""
+  let rawParts = ""
 
   const hrefMatch = content.match(/href=["']([^"']*ueditorupload\/read[^"']*)["']/i)
   if (hrefMatch?.[1]) {
@@ -141,6 +186,8 @@ export function parseQuestionFileMeta(content: string): {
       const sz = Number(u.searchParams.get("fncs_size") || "0")
       if (Number.isFinite(sz) && sz > 0) size = sz
       name = (u.searchParams.get("fncs_name") || "").trim()
+      md5 = (u.searchParams.get("fncs_md5") || "").trim()
+      rawParts = (u.searchParams.get("fncs_parts") || "").trim()
     } catch {
       // ignore malformed href
     }
@@ -153,8 +200,13 @@ export function parseQuestionFileMeta(content: string): {
     const m = content.match(/filename=["']([^"']+)["']/i)
     if (m?.[1]) name = unescapeHtml(m[1])
   }
+  const parts = parseQBankParts(rawParts, objectId, size)
+  if (!objectId && parts.length > 0) objectId = parts[0].objectId
+  if (size === 0 && parts.length > 0) {
+    size = parts.reduce((acc, p) => acc + p.size, 0)
+  }
   if (!objectId || !name) return null
-  return { name, objectId, size }
+  return { name, objectId, size, md5, parts }
 }
 
 export class ClientChaoXingQBank {
