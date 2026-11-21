@@ -4799,7 +4799,7 @@ const driverConfigs: Record<string, any> = {
       name: "ChaoXingQBank",
       local_sort: true,
       only_local: false,
-      only_proxy: true,
+      only_proxy: false,
       no_cache: false,
       no_upload: false,
       need_ms: false,

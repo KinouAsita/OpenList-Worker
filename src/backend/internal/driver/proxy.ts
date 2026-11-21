@@ -128,7 +128,6 @@ const DRIVER_FORCE_PROXY = new Set<string>([
   "chaoxing",
   "chaoxinggroupdrive",
   "chaoxinggroup",
-  "chaoxingqbank",
   "local",
 ])
 

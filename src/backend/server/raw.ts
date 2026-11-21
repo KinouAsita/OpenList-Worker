@@ -672,7 +672,10 @@ rawRouter.get("/*", async (c) => {
               )
             }
 
-            if (decision.needsProxy) {
+            const isMultiPart =
+              Array.isArray(fileItem.raw_parts) && fileItem.raw_parts.length > 1
+
+            if (decision.needsProxy || isMultiPart) {
               return proxyUpstream(
                 c,
                 fileItem,
